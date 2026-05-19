@@ -28,7 +28,7 @@ DEFAULT_IMAGE_SIZE = 224
 
 @PreTrainedConfig.register_subclass("pi05")
 @dataclass
-class PI05Config(PreTrainedConfig):
+class PI05ExpConfig(PreTrainedConfig):
     paligemma_variant: str = "gemma_2b"
     action_expert_variant: str = "gemma_300m"
     dtype: str = "float32"  # Options: "bfloat16", "float32"
