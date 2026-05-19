@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import PipelineFeatureType, PolicyFeature
-from lerobot.policies.pi05.configuration_pi05 import PI05Config
+from lerobot.policies.pi05_exp.configuration_pi05_exp import PI05ExpConfig
 from lerobot.processor import (
     AbsoluteActionsProcessorStep,
     AddBatchDimensionProcessorStep,
@@ -46,9 +46,9 @@ from lerobot.utils.constants import (
 )
 
 
-@ProcessorStepRegistry.register(name="pi05_prepare_state_tokenizer_processor_step")
+@ProcessorStepRegistry.register(name="pi05_exp__prepare_state_tokenizer_processor_step")
 @dataclass
-class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
+class Pi05ExpPrepareStateTokenizerProcessorStep(ProcessorStep):
     """
     Processor step to prepare the state and tokenize the language input.
     """
@@ -95,8 +95,8 @@ class Pi05PrepareStateTokenizerProcessorStep(ProcessorStep):
         return features
 
 
-def make_pi05_pre_post_processors(
-    config: PI05Config,
+def make_pi05_exp_pre_post_processors(
+    config: PI05ExpConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
 ) -> tuple[
     PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],

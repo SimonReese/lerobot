@@ -48,7 +48,7 @@ else:
     layernorm_forward = None
     PaliGemmaForConditionalGenerationWithPiGemma = None
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.policies.pi05.configuration_pi05 import DEFAULT_IMAGE_SIZE, PI05Config
+from lerobot.policies.pi05_exp.configuration_pi05_exp import DEFAULT_IMAGE_SIZE, PI05ExpConfig
 from lerobot.policies.pretrained import PreTrainedPolicy, T
 from lerobot.policies.rtc.modeling_rtc import RTCProcessor
 from lerobot.utils.constants import (
@@ -548,10 +548,10 @@ class PaliGemmaWithExpertModel(
         return [prefix_output, suffix_output], prefix_past_key_values
 
 
-class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
+class PI05ExpPytorch(nn.Module):  # see openpi `PI0Pytorch`
     """Core PI05 PyTorch model."""
 
-    def __init__(self, config: PI05Config, rtc_processor: RTCProcessor | None = None):
+    def __init__(self, config: PI05ExpConfig, rtc_processor: RTCProcessor | None = None):
         super().__init__()
         self.config = config
         self.rtc_processor = rtc_processor
@@ -963,15 +963,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return self.action_out_proj(suffix_out)
 
 
-class PI05Policy(PreTrainedPolicy):
+class PI05ExpPolicy(PreTrainedPolicy):
     """PI05 Policy for LeRobot."""
 
-    config_class = PI05Config
-    name = "pi05"
+    config_class = PI05ExpConfig
+    name = "pi05_exp"
 
     def __init__(
         self,
-        config: PI05Config,
+        config: PI05ExpConfig,
         **kwargs,
     ):
         """
@@ -984,7 +984,7 @@ class PI05Policy(PreTrainedPolicy):
 
         # Initialize the core PI05 model
         self.init_rtc_processor()
-        self.model = PI05Pytorch(config, rtc_processor=self.rtc_processor)
+        self.model = PI05ExpPytorch(config, rtc_processor=self.rtc_processor)
 
         # Enable gradient checkpointing if requested
         if config.gradient_checkpointing:
