@@ -27,6 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available
+from vggt.vggt.models.vggt import VGGT
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -573,6 +574,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             train_expert_only=config.train_expert_only,
         )
 
+        # VGGT
+        self.vggt = VGGT.from_pretrained("facebook/vggt-1b")
+        self.vggt.eval()
+        # Set parameters non traianble
+        for param in self.vggt.parameters():
+            param.requires_grad = False
+        # Fusion Module
+        self.fusion = SigLipVGGTFusion()
+
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
         self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
 
@@ -638,23 +648,74 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         return time.to(dtype=torch.float32, device=device)
 
     def embed_prefix(
-        self, images, img_masks, tokens, masks
+        self, images: list[torch.FloatTensor], img_masks: list[torch.BoolTensor], tokens, masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        """Embed images with SigLIP and language tokens with embedding layer.
+
+        :param list[torch.FloatTensor] images: a list of tensor images, each with shape (B, C, H, W) in float values [-1, 1].
+        Each element in the list is a single camera. The values for padded images are [-1]
+        :param list[torch.BoolTensor] img_masks: a list of boolean tensors, each with shape (B,) in boolean values True/False. 
+        Each element in the list is a single camera. Each tensor value refer to an image in the batch
+        """
+
         embs = []
         pad_masks = []
         att_masks = []
 
-        # Process images
-        for img, img_mask in zip(images, img_masks, strict=True):
+        # Pass images to vggt to perform embeddings
+        # 1: how many cameras do we have?
+        valid_images_indices = []
+        valid_images_list = []
+        for list_index, (camera, camera_mask) in enumerate(zip(images, img_masks, strict=True)):
+            # We check if this camera has valid images
+            if camera_mask.any():
+                valid_images_indices.append(list_index)
+                # convert image to range [0, 1] for vggt aggregator
+                camera = (camera + 1.0) / 2.0
+                valid_images_list.append(camera)
+                # We make sure that the batch is consistent: all images in this batch are valid
+                assert camera_mask.all(), f"Error. Some images from camera {list_index} are not real. img_mask tensor for this camera was {camera_mask}"
 
+        # 2: Prepare images for vggt. We must obtain a tensor of shape (B, S, C, H, W)
+        vggt_images: torch.Tensor = torch.stack(valid_images_list) # Stack valid images, obtaining a tensor of shape (S, B, C, H, W)
+        vggt_images = vggt_images.permute(1, 0, 2, 3, 4)
+        
+        aggregated_tokens_list: list[torch.Tensor] # A list of 24 (=vggt layers) tensors of shape (B, S, (1+4+(224/14)^2)=261, 2048)
+        with torch.no_grad():      
+            with torch.autocast(device_type=vggt_images.device.type):
+                aggregated_tokens_list, patch_start_idx = self.vggt.aggregator(vggt_images)
+        # Extract only the last layer tokens
+        last_tokens = aggregated_tokens_list[-1]
+        # Extract only patch tokens (no camera/register tokens)
+        vggt_features = last_tokens[:, :, patch_start_idx:, :] # extract the features for each image token (starting from index 5, since 1 is for camera, 4 for register)
+        # vggt_features has size (B, S, 256, 2048) (256 = 224 (dim img) / 14 (patch size in vggt) ^ 2 (for x and y dimensions) -> 16^2 -> 256 tokens, each with 2048 dimensions)
+        # Swap again B and S
+        vggt_features = vggt_features.permute(1, 0, 2, 3) # -> (S, B, 256, 2048)
+
+        # Now we want to combine those features with those from paligemma
+        vgg_camera_index = 0
+        # Process images
+        for index, (img, img_mask) in enumerate(zip(images, img_masks, strict=True)):
+            camera_vggt_features = None
+            # We check if this image is valid
+            if index in valid_images_indices:
+                # We extract the next vggt camera features
+                camera_vggt_features = vggt_features[vgg_camera_index] # (B, 256, 2048)
+                vgg_camera_index += 1
+            
+            # We get image embeddings from paligemma
             def image_embed_func(img):
                 return self.paligemma_with_expert.embed_image(img)
 
-            img_emb = self._apply_checkpoint(image_embed_func, img)
-            bsize, num_img_embs = img_emb.shape[:2]
+            siglip_img_emb = self._apply_checkpoint(image_embed_func, img) # Has shape (B, 256, 2048) where 256 is (224/14)^2
+            bsize, num_img_embs = siglip_img_emb.shape[:2] # B, 256
 
-            embs.append(img_emb)
+            # Use a fusion layer to attend vggt tokens with siglip tokens
+            if camera_vggt_features is not None:
+                img_emb = self.fusion(siglip_img_emb, camera_vggt_features)
+            else: img_emb = siglip_img_emb
+
+            embs.append(img_emb) # <---- here the fused embeddings are returned to the pi05 pipeline
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
 
@@ -1193,13 +1254,13 @@ class PI05Policy(PreTrainedPolicy):
             images.append(img)
             # Create mask (all ones for real images)
             bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            mask = torch.ones(bsize, dtype=torch.bool, device=device) # has shape (B) and values 1,1,1...
             img_masks.append(mask)
 
         # Create image features not present in the batch as fully 0 padded images
         for _num_empty_cameras in range(len(missing_img_keys)):
             img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
+            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras # for each missing camera, has shape (B) and values 0,0,0...
             images.append(img)
             img_masks.append(mask)
 
@@ -1292,3 +1353,45 @@ class PI05Policy(PreTrainedPolicy):
             "target_modules": target_modules,
             "modules_to_save": [],
         }
+
+
+class SigLipVGGTFusion(nn.Module):
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.q_norm = nn.LayerNorm(2048)
+        self.kv_norm = nn.LayerNorm(2048)
+        self.attn = nn.MultiheadAttention(
+            embed_dim=2048,
+            num_heads=16,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.alpha = nn.Parameter(torch.zeros(1))
+        self.norm = nn.LayerNorm(2048)
+
+    def forward(self, siglip_tokens: torch.Tensor, vggt_tokens: torch.Tensor):
+        """Implements attention usign siglip as queries and vggt as key, values
+        :param torch.Tensor siglip_tokens: tensor of shape (B, 256, 2048)
+        :param torch.Tensor vggt_tokens: tensor of shape (B, 256, 2048)
+        """
+
+        B, N, DIM = siglip_tokens.shape
+        assert (
+            vggt_tokens.shape[0] == siglip_tokens.shape[0] and
+            vggt_tokens.shape[1] == siglip_tokens.shape[1] and
+            vggt_tokens.shape[2] == siglip_tokens.shape[2] == 2048 ), f"Error in attending siglip+vggt: siglip.shape was {siglip_tokens.shape}, vggt.shape was {vggt_tokens.shape}"
+        
+        Q = self.q_norm(siglip_tokens)
+        KV = self.kv_norm(vggt_tokens)
+
+        output, _weights = self.attn(
+            query = Q,
+            key = KV,
+            value = KV,
+            need_weights = False
+        )
+        output = siglip_tokens + self.alpha * output # residual connection with gate to train
+        output = self.norm(output)
+
+        return output
