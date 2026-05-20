@@ -678,7 +678,7 @@ class PI05ExpPytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         # 2: Prepare images for vggt. We must obtain a tensor of shape (B, S, C, H, W)
         vggt_images: torch.Tensor = torch.stack(valid_images_list) # Stack valid images, obtaining a tensor of shape (S, B, C, H, W)
-        vggt_images = vggt_images.permute(1, 0, 2, 3, 4)
+        vggt_images = vggt_images.permute(1, 0, 2, 3, 4).contiguous()
         
         aggregated_tokens_list: list[torch.Tensor] # A list of 24 (=vggt layers) tensors of shape (B, S, (1+4+(224/14)^2)=261, 2048)
         with torch.no_grad():      
