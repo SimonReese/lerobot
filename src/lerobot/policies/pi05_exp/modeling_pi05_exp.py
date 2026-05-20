@@ -27,7 +27,7 @@ import torch.nn.functional as F  # noqa: N812
 from torch import Tensor, nn
 
 from lerobot.utils.import_utils import _transformers_available
-from vggt.vggt.models.vggt import VGGT
+from vggt.models.vggt import VGGT
 
 # Conditional import for type checking and lazy loading
 if TYPE_CHECKING or _transformers_available:
@@ -1007,7 +1007,7 @@ class PI05ExpPolicy(PreTrainedPolicy):
         cache_dir: str | Path | None = None,
         local_files_only: bool = False,
         revision: str | None = None,
-        strict: bool = True,
+        strict: bool = False,
         **kwargs,
     ) -> T:
         """Override the from_pretrained method to handle key remapping and display important disclaimer."""
