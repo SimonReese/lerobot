@@ -25,6 +25,7 @@ from .tdmpc.configuration_tdmpc import TDMPCConfig as TDMPCConfig
 from .vqbet.configuration_vqbet import VQBeTConfig as VQBeTConfig
 from .wall_x.configuration_wall_x import WallXConfig as WallXConfig
 from .xvla.configuration_xvla import XVLAConfig as XVLAConfig
+from .pi05_exp.configuration_pi05_exp import PI05ExpConfig
 
 __all__ = [
     "ACTConfig",
@@ -40,4 +41,5 @@ __all__ = [
     "GrootConfig",
     "XVLAConfig",
     "WallXConfig",
+    "PI05ExpConfig"
 ]

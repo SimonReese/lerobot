@@ -20,6 +20,7 @@ import importlib
 import logging
 from typing import Any, TypedDict, Unpack
 
+from lerobot.rl import process
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
@@ -44,6 +45,7 @@ from lerobot.policies.utils import validate_visual_features_consistency
 from lerobot.policies.vqbet.configuration_vqbet import VQBeTConfig
 from lerobot.policies.wall_x.configuration_wall_x import WallXConfig
 from lerobot.policies.xvla.configuration_xvla import XVLAConfig
+from lerobot.policies.pi05_exp.configuration_pi05_exp import PI05ExpConfig
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.processor.converters import (
     batch_to_transition,
@@ -158,6 +160,10 @@ def get_policy_class(name: str) -> type[PreTrainedPolicy]:
         from lerobot.policies.wall_x.modeling_wall_x import WallXPolicy
 
         return WallXPolicy
+    elif name == "pi05_exp":
+        from lerobot.policies.pi05_exp.modeling_pi05_exp import PI05ExpPolicy
+
+        return PI05ExpPolicy
     else:
         try:
             return _get_policy_cls_from_policy_name(name=name)
@@ -210,6 +216,8 @@ def make_policy_config(policy_type: str, **kwargs) -> PreTrainedConfig:
         return XVLAConfig(**kwargs)
     elif policy_type == "wall_x":
         return WallXConfig(**kwargs)
+    elif policy_type == "pi05_exp":
+        return PI05ExpConfig(**kwargs)
     else:
         try:
             config_cls = PreTrainedConfig.get_choice_class(policy_type)
@@ -426,6 +434,13 @@ def make_pre_post_processors(
         from lerobot.policies.wall_x.processor_wall_x import make_wall_x_pre_post_processors
 
         processors = make_wall_x_pre_post_processors(
+            config=policy_cfg,
+            dataset_stats=kwargs.get("dataset_stats"),
+        )
+
+    elif isinstance(policy_cfg, PI05ExpConfig):
+        from lerobot.policies.pi05_exp.processor_pi05_exp import make_pi05_exp_pre_post_processors
+        processors = make_pi05_exp_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
         )
