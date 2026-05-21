@@ -575,7 +575,7 @@ class PI05ExpPytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         # VGGT
-        self.vggt = VGGT.from_pretrained("facebook/vggt-1b")
+        self.vggt = VGGT.from_pretrained("facebook/vggt-1b", torch_dtype=torch.bfloat16)
         self.vggt.eval()
         # Set parameters non traianble
         for param in self.vggt.parameters():
@@ -682,10 +682,11 @@ class PI05ExpPytorch(nn.Module):  # see openpi `PI0Pytorch`
         
         aggregated_tokens_list: list[torch.Tensor] # A list of 24 (=vggt layers) tensors of shape (B, S, (1+4+(224/14)^2)=261, 2048)
         with torch.no_grad():      
-            with torch.autocast(device_type=vggt_images.device.type):
+            with torch.autocast(device_type=vggt_images.device.type, dtype=torch.bfloat16):
                 aggregated_tokens_list, patch_start_idx = self.vggt.aggregator(vggt_images)
         # Extract only the last layer tokens
         last_tokens = aggregated_tokens_list[-1]
+        del aggregated_tokens_list
         # Extract only patch tokens (no camera/register tokens)
         vggt_features = last_tokens[:, :, patch_start_idx:, :] # extract the features for each image token (starting from index 5, since 1 is for camera, 4 for register)
         # vggt_features has size (B, S, 256, 2048) (256 = 224 (dim img) / 14 (patch size in vggt) ^ 2 (for x and y dimensions) -> 16^2 -> 256 tokens, each with 2048 dimensions)
@@ -711,8 +712,10 @@ class PI05ExpPytorch(nn.Module):  # see openpi `PI0Pytorch`
             bsize, num_img_embs = siglip_img_emb.shape[:2] # B, 256
 
             # Use a fusion layer to attend vggt tokens with siglip tokens
+            def fuse_img(siglip_img_emb, camera_vggt_features):
+                return self.fusion(siglip_img_emb, camera_vggt_features)
             if camera_vggt_features is not None:
-                img_emb = self.fusion(siglip_img_emb, camera_vggt_features)
+                img_emb = self._apply_checkpoint(fuse_img, siglip_img_emb, camera_vggt_features)
             else: img_emb = siglip_img_emb
 
             embs.append(img_emb) # <---- here the fused embeddings are returned to the pi05 pipeline
