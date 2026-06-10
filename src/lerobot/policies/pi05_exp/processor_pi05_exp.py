@@ -44,7 +44,8 @@ from lerobot.utils.constants import (
     POLICY_POSTPROCESSOR_DEFAULT_NAME,
     POLICY_PREPROCESSOR_DEFAULT_NAME,
 )
-
+# Register relative action step for compatibility with HF config for LoRA
+@ProcessorStepRegistry.register("relative_actions_processor")(RelativeActionsProcessorStep)
 
 @ProcessorStepRegistry.register(name="pi05_exp__prepare_state_tokenizer_processor_step")
 @dataclass
